@@ -70,7 +70,7 @@ def check_faults(robot, dcss, arm, index, execute):
                 raise RuntimeError(f"{arm} joint {joint + 1} still has a servo fault")
 
 
-def check_pose(robot, dcss, arm, index):
+def check_pose(robot, dcss, arm, index, goal=ZERO):
     limits = [
         tuple(
             read_parameter(robot, "float", f"R.A{index}.L{joint}.BASIC.{key}")
@@ -85,17 +85,17 @@ def check_pose(robot, dcss, arm, index):
 
     data = wait_feedback(robot, dcss, index, idle, 3, f"{arm} disabled")
     start = data["outputs"][index]["fb_joint_pos"]
-    for joint, (value, target, (low, high)) in enumerate(zip(start, ZERO, limits), 1):
+    for joint, (value, target, (low, high)) in enumerate(zip(start, goal, limits, strict=True), 1):
         if not (math.isfinite(low) and math.isfinite(high)
                 and low <= value <= high and low <= target <= high):
             raise RuntimeError(
                 f"{arm} J{joint}: start {value}, target {target}, limits [{low}, {high}]"
             )
-    print(f"{arm}: {start} -> {ZERO} degrees")
+    print(f"{arm}: {start} -> {goal} degrees")
     return start
 
 
-def home(robot, dcss, arm, index, start):
+def home(robot, dcss, arm, index, start, goal=ZERO):
     def position_mode(data):
         state = data["states"][index]
         if state["err_code"] or state["cur_state"] == 100:
@@ -122,22 +122,25 @@ def home(robot, dcss, arm, index, start):
 
         planning_attempted = True
         ratio = LIMIT_PERCENT / 100
-        if not robot.setPln_joint(arm, actual, ZERO, ratio, ratio):
+        if not robot.setPln_joint(arm, actual, goal, ratio, ratio):
             raise RuntimeError(f"{arm} joint planner rejected the target")
 
-        def at_zero(data):
+        def at_goal(data):
             if not position_mode(data):
                 raise RuntimeError(f"{arm} left position mode")
             output = data["outputs"][index]
             return (
                 output["traj_state"] == b"\x00"
                 and output["low_speed_flag"] == b"\x01"
-                and all(abs(q) <= TOLERANCE for q in output["fb_joint_pos"])
+                and all(
+                    abs(q - target) <= TOLERANCE
+                    for q, target in zip(output["fb_joint_pos"], goal, strict=True)
+                )
             )
 
-        wait_feedback(robot, dcss, index, at_zero, 120, f"{arm} at zero")
+        wait_feedback(robot, dcss, index, at_goal, 120, f"{arm} at target")
         arrived = True
-        print(f"{arm} reached zero within {TOLERANCE} degrees")
+        print(f"{arm} reached its target within {TOLERANCE} degrees")
     finally:
         try:
             if planning_attempted and not arrived and not robot.stopRunPln_joint(arm):
@@ -151,8 +154,10 @@ def home(robot, dcss, arm, index, start):
             )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(targets=None, *, description=__doc__):
+    if targets is None:
+        targets = {'A': ZERO, 'B': ZERO}
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--ip", required=True, help="Controller IPv4 address")
     parser.add_argument("--config", type=Path, help="Model-matched .MvKDCfg for joint planning")
     parser.add_argument(
@@ -169,14 +174,14 @@ def main():
         dcss = DCSS()
         for index, arm in enumerate("AB"):
             check_faults(robot, dcss, arm, index, args.execute)
-            check_pose(robot, dcss, arm, index)
+            check_pose(robot, dcss, arm, index, targets[arm])
         if args.execute:
             if not robot.pln_init(str(args.config.resolve())):
                 raise RuntimeError("Joint planner initialization failed")
             for index, arm in enumerate("AB"):
                 check_faults(robot, dcss, arm, index, True)
-                start = check_pose(robot, dcss, arm, index)
-                home(robot, dcss, arm, index, start)
+                start = check_pose(robot, dcss, arm, index, targets[arm])
+                home(robot, dcss, arm, index, start, targets[arm])
         else:
             print("Preview complete. No motion or state commands sent.")
     finally:
