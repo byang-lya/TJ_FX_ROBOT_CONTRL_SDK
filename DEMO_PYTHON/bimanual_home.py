@@ -5,10 +5,11 @@ import math
 from home_both_arms import main
 
 # Viser robots/marvin_pro/spec.yaml lists rest_q in radians.
-# This station uses SDK channel A for physical right and B for physical left.
+# Vendor cabling since 2026-11-23: channel A is the left arm (port ET0 "LEFT"),
+# channel B the right arm (ET2 "RIGHT").
 REST_RAD = {
-    "A": [-1.2, -1.2, 1.2, -1.6, 0.0, 0.0, 0.0],
-    "B": [1.2, -1.2, -1.2, -1.6, 0.0, 0.0, 0.0],
+    "A": [1.2, -1.2, -1.2, -1.6, 0.0, 0.0, 0.0],
+    "B": [-1.2, -1.2, 1.2, -1.6, 0.0, 0.0, 0.0],
 }
 
 
